@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>paste, with highlighting</title>
+<style>
+  :root, [data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a21; --text: #e6e6e6; --muted: #9aa3b2;
+    --border: #2a2f3a; --accent: #82aaff;
+    --kw: #c792ea; --type: #7dcfff; --str: #a5d6a7; --com: #7d8590;
+    --num: #f78c6c; --fn: #82aaff; --builtin: #ffcb6b; --const: #ff9cac;
+    --meta: #89ddff; --sel: rgba(130, 170, 255, .35);
+    --br0: #ff7ab8; --br1: #7dcfff; --br2: #a5d6a7;
+    --br3: #ffcb6b; --br4: #c792ea; --br5: #f78c6c; --brerr: #ff6b6b;
+  }
+  [data-theme="light"] {
+    --bg: #ffffff; --panel: #f6f8fa; --text: #24292f; --muted: #57606a;
+    --border: #d0d7de; --accent: #0969da;
+    --kw: #cf222e; --type: #0550ae; --str: #0a3069; --com: #6e7781;
+    --num: #953800; --fn: #8250df; --builtin: #996500; --const: #cf222e;
+    --meta: #0550ae; --sel: rgba(9, 105, 218, .25);
+    --br0: #d33682; --br1: #0550ae; --br2: #116329;
+    --br3: #9a6700; --br4: #8250df; --br5: #cf222e; --brerr: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-system, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+    padding: .6rem .8rem; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  header h1 { font-size: 1rem; margin: 0 .5rem 0 0; white-space: nowrap; }
+  header h1 span { color: var(--muted); font-weight: normal; }
+  button, select {
+    font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; padding: .35rem .6rem; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: #0f1115; border-color: var(--accent); font-weight: 600; }
+  [data-theme="light"] button.primary { color: #fff; }
+  button:hover, select:hover { border-color: var(--accent); }
+  .spacer { flex: 1; }
+  .wrap { position: relative; flex: 1; min-height: 240px; overflow: hidden; }
+  .codebox {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 14px; line-height: 1.55; tab-size: 4;
+    padding: 16px; margin: 0; white-space: pre; word-wrap: normal;
+    overflow-wrap: normal; border: 0; width: 100%; height: 100%;
+  }
+  #hl { position: absolute; inset: 0; z-index: 1; overflow: hidden; }
+  #hlcode { display: block; }
+  #ed {
+    position: absolute; inset: 0; z-index: 2; resize: none; outline: none;
+    background: transparent; color: transparent; caret-color: var(--text);
+    overflow: auto; white-space: pre;
+  }
+  #ed::selection { background: var(--sel); color: transparent; }
+  .kw { color: var(--kw); } .type { color: var(--type); } .str { color: var(--str); }
+  .com { color: var(--com); font-style: italic; } .num { color: var(--num); }
+  .fn { color: var(--fn); } .builtin { color: var(--builtin); } .const { color: var(--const); }
+  .meta { color: var(--meta); } .sym { color: var(--builtin); }
+  .br0 { color: var(--br0); font-weight: 600; } .br1 { color: var(--br1); font-weight: 600; }
+  .br2 { color: var(--br2); font-weight: 600; } .br3 { color: var(--br3); font-weight: 600; }
+  .br4 { color: var(--br4); font-weight: 600; } .br5 { color: var(--br5); font-weight: 600; }
+  .brerr { color: var(--brerr); font-weight: 700; }
+  footer {
+    padding: .45rem .8rem; border-top: 1px solid var(--border); background: var(--panel);
+    color: var(--muted); font-size: .85rem; display: flex; flex-wrap: wrap; gap: 1rem;
+  }
+  #sharebox {
+    display: none; gap: .5rem; align-items: center;
+    padding: .5rem .8rem; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  #sharebox.open { display: flex; }
+  #sharebox input { flex: 1; min-width: 0; font: .85rem ui-monospace, monospace; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: .35rem .5rem; }
+  #status { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>paste <span>— with highlighting</span></h1>
+  <label>Language
+    <select id="lang" aria-label="Language">
+      <option value="auto" selected>Auto</option>
+      <option value="odin">Odin</option>
+      <option value="python">Python</option>
+      <option value="javascript">JavaScript</option>
+      <option value="c">C</option>
+      <option value="rust">Rust</option>
+      <option value="smalltalk">Smalltalk</option>
+      <option value="generic">Generic</option>
+    </select>
+  </label>
+  <button id="share" class="primary" type="button">Share link</button>
+  <button id="copycode" type="button">Copy code</button>
+  <button id="download" type="button">Download</button>
+  <button id="example" type="button">Example</button>
+  <button id="new" type="button">New</button>
+  <span class="spacer"></span>
+  <button id="theme" type="button">Invert colours</button>
+</header>
+
+<div id="sharebox">
+  <label for="shareurl">Share link:</label>
+  <input id="shareurl" readonly>
+  <button id="copylink" type="button">Copy link</button>
+</div>
+
+<div class="wrap">
+  <pre id="hl" class="codebox" aria-hidden="true"><code id="hlcode"></code></pre>
+  <textarea id="ed" class="codebox" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
+    placeholder="Paste or type code here, then hit Share link. Everything lives in the URL fragment — no server ever sees it."></textarea>
+</div>
+
+<footer>
+  <span id="status">Empty paste.</span>
+  <span>Tip: Ctrl/Cmd + Enter shares. The # fragment is never sent to the server.</span>
+</footer>
+
+<noscript><p style="padding:1rem">This needs JavaScript — it does all the work in your browser.</p></noscript>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const ed = $('ed'), hl = $('hl'), hlcode = $('hlcode'), langSel = $('lang'),
+      statusEl = $('status'), sharebox = $('sharebox'), shareurl = $('shareurl');
+let dirty = false;
+
+/* ---- Languages: deliberately small keyword sets. The generic scanner
+   (strings / comments / numbers / calls) does most of the work. ---- */
+function words(s) { return new Set(s.trim().split(/\s+/).filter(Boolean)); }
+const LANGS = {
+  odin: {
+    line: '//', block: ['/*', '*/'], quotes: ['"', '`', "'"],
+    kw: words('package import foreign using proc struct enum union bit_set bit_field map distinct if else for switch case return defer break continue fallthrough when or_return in not_in do'),
+    type: words('int i8 i16 i32 i64 i128 uint u8 u16 u32 u64 u128 uintptr i16le i32le f16 f32 f64 f16le f32le complex64 complex128 string cstring bool byte rune rawptr any typeid'),
+    const: words('true false nil'),
+    builtin: words('len cap append delete make new transmute size_of type_of context'),
+  },
+  python: {
+    line: '#', quotes: ['"', "'"], triple: true,
+    kw: words('def class if elif else for while return import from as try except finally with lambda pass break continue and or not in is yield async await raise global nonlocal del'),
+    type: words('int float str bool list dict set tuple bytes object'),
+    const: words('True False None'),
+    builtin: words('print len range append extend sorted open isinstance type enumerate zip map filter sum min max abs str int float list dict set'),
+  },
+  javascript: {
+    line: '//', block: ['/*', '*/'], quotes: ['"', "'", '`'],
+    kw: words('const let var function return if else for while switch case break continue class extends new typeof instanceof async await try catch finally throw import from export default do in of void delete'),
+    type: words('string number boolean object'),
+    const: words('true false null undefined NaN Infinity this'),
+    builtin: words('console Math JSON Object Array String Number parseInt parseFloat setTimeout fetch Promise'),
+  },
+  c: {
+    line: '//', block: ['/*', '*/'], quotes: ['"', "'"], meta: true,
+    kw: words('if else for while switch case break continue return struct enum union typedef static const volatile void do goto sizeof'),
+    type: words('int char short long float double unsigned signed bool size_t'),
+    const: words('true false NULL'),
+    builtin: words('printf fprintf malloc free calloc realloc memcpy strlen sizeof'),
+  },
+  rust: {
+    line: '//', block: ['/*', '*/'], quotes: ['"'],
+    kw: words('fn let mut struct enum impl trait pub use mod match if else for while loop return break continue const static ref move in where unsafe extern crate super self Self as dyn async await'),
+    type: words('i8 i16 i32 i64 i128 isize u8 u16 u32 u64 u128 usize f32 f64 bool char str String Vec Option Result'),
+    const: words('true false None Some Ok Err'),
+    builtin: words('println print vec format panic assert'),
+  },
+  smalltalk: {
+    quotes: ["'"], smalltalk: true,
+    kw: words(''),
+    type: words(''),
+    const: words('true false nil self super thisContext'),
+    builtin: words(''),
+  },
+  generic: {
+    line: '//', block: ['/*', '*/'], quotes: ['"', "'"],
+    kw: words('if else for while return function class struct enum switch case break continue import package'),
+    type: words('int string bool float double'),
+    const: words('true false null nil'),
+    builtin: words(''),
+  },
+};
+const EXTS = { odin: 'odin', python: 'py', javascript: 'js', c: 'c', rust: 'rs', smalltalk: 'st', generic: 'txt' };
+
+function detect(code) {
+  if (/\bpackage\s+\w+/.test(code) || /\bproc\s*\(/.test(code) || /:=/.test(code) && /\bmain\s*::/.test(code)) return 'odin';
+  if (/^\s*def\s+\w+\s*\(/m.test(code) || /^\s*class\s+\w+\s*:/m.test(code)) return 'python';
+  if (/\bfn\s+\w+\s*\(/.test(code)) return 'rust';
+  if (/console\.log|=>/.test(code) || /\b(const|let)\s+\w+\s*=/.test(code)) return 'javascript';
+  if (/#include|printf\s*\(/.test(code)) return 'c';
+  return 'generic';
+}
+function effectiveLang() {
+  return langSel.value === 'auto' ? detect(ed.value) : langSel.value;
+}
+
+/* ---- Tiny hand-written tokenizer: scan left to right so a string
+   never swallows a comment marker, and vice versa. ---- */
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function highlight(code, key) {
+  const L = LANGS[key] || LANGS.generic;
+  let out = '', i = 0, n = code.length;
+  // Rainbow brackets: one stack for (), [], {}. An opener takes the
+  // colour of its depth, its matching closer takes the same colour,
+  // and the palette cycles every 6 levels. Because strings and
+  // comments are consumed whole above, brackets inside them never
+  // reach this code and never disturb the depth.
+  const stack = [];
+  const MATCH = { ')': '(', ']': '[', '}': '{' };
+  const span = (cls, t) => { out += '<span class="' + cls + '">' + esc(t) + '</span>'; };
+  const plain = (t) => { out += esc(t); };
+  while (i < n) {
+    const ch = code[i], rest = code.slice(i);
+    // Smalltalk comment: "..." (a string in most other languages).
+    if (L.smalltalk && ch === '"') {
+      const end = code.indexOf('"', i + 1);
+      const tok = end === -1 ? rest : code.slice(i, end + 1);
+      span('com', tok); i += tok.length; continue;
+    }
+    // Block comment.
+    if (L.block && rest.startsWith(L.block[0])) {
+      const end = code.indexOf(L.block[1], i + L.block[0].length);
+      const tok = end === -1 ? rest : code.slice(i, end + L.block[1].length);
+      span('com', tok); i += tok.length; continue;
+    }
+    // Line comment.
+    if (L.line && rest.startsWith(L.line)) {
+      const end = code.indexOf('\n', i);
+      const tok = end === -1 ? rest : code.slice(i, end);
+      span('com', tok); i += tok.length; continue;
+    }
+    // Preprocessor / meta line, e.g. #include (C-like only).
+    if (L.meta && ch === '#' && (i === 0 || code[i - 1] === '\n')) {
+      const end = code.indexOf('\n', i);
+      const tok = end === -1 ? rest : code.slice(i, end);
+      span('meta', tok); i += tok.length; continue;
+    }
+    // Python triple-quoted string.
+    if (L.triple && (rest.startsWith('"""') || rest.startsWith("'''"))) {
+      const q = rest.slice(0, 3), end = code.indexOf(q, i + 3);
+      const tok = end === -1 ? rest : code.slice(i, end + 3);
+      span('str', tok); i += tok.length; continue;
+    }
+    // Smalltalk symbol (#foo) and character ($x).
+    if (L.smalltalk && ch === '#') {
+      const m = /^#[A-Za-z_][A-Za-z0-9_]*/.exec(rest);
+      if (m) { span('sym', m[0]); i += m[0].length; continue; }
+    }
+    if (L.smalltalk && ch === '$' && i + 1 < n && code[i + 1] !== '\n') {
+      span('str', code.slice(i, i + 2)); i += 2; continue;
+    }
+    // Python decorator.
+    if (key === 'python' && ch === '@' && (i === 0 || code[i - 1] === '\n')) {
+      const m = /^@\w+/.exec(rest);
+      if (m) { span('meta', m[0]); i += m[0].length; continue; }
+    }
+    // String / rune. Rust lifetimes ('a) are not strings: only treat
+    // 'x' / '\n' as a character literal there.
+    if (L.quotes && L.quotes.includes(ch)) {
+      if (key === 'rust' && ch === "'") {
+        const m = /^'(\\.|[^\\])'/.exec(rest);
+        if (m) { span('str', m[0]); i += m[0].length; continue; }
+        plain(ch); i++; continue;
+      }
+      let j = i + 1, closed = false;
+      while (j < n) {
+        const c = code[j];
+        if (!L.smalltalk && c === '\\') { j += 2; continue; }
+        if (L.smalltalk && c === "'" && code[j + 1] === "'") { j += 2; continue; }
+        if (c === ch) { closed = true; j++; break; }
+        if (c === '\n' && ch !== '`') break; // unterminated: stop at EOL
+        j++;
+      }
+      const tok = code.slice(i, j);
+      if (closed || ch === '`') span('str', tok); else plain(tok);
+      i = j; continue;
+    }
+    // Number: hex, decimal, float, exponent.
+    const num = /^(0x[0-9a-fA-F_]+|\d[\d_]*(?:\.\d[\d_]*)?(?:[eE][+-]?\d+)?)/.exec(rest);
+    if (/[0-9]/.test(ch) && num) { span('num', num[0]); i += num[0].length; continue; }
+    // Identifier / keyword / type / call.
+    const id = /^[A-Za-z_][A-Za-z0-9_]*/.exec(rest);
+    if (id) {
+      let tok = id[0], adv = tok.length;
+      if (L.smalltalk && code[i + adv] === ':') { tok += ':'; adv++; span('kw', tok); i += adv; continue; }
+      if (L.kw.has(tok)) span('kw', tok);
+      else if (L.type.has(tok)) span('type', tok);
+      else if (L.const.has(tok)) span('const', tok);
+      else if (L.builtin.has(tok)) span('builtin', tok);
+      else if (code[i + adv] === '(') span('fn', tok);
+      else plain(tok);
+      i += adv; continue;
+    }
+    // Rainbow brackets.
+    if (ch === '(' || ch === '[' || ch === '{') {
+      span('br' + (stack.length % 6), ch);
+      stack.push(ch); i++; continue;
+    }
+    if (ch === ')' || ch === ']' || ch === '}') {
+      if (stack.length && stack[stack.length - 1] === MATCH[ch]) {
+        stack.pop();
+        span('br' + (stack.length % 6), ch);
+      } else {
+        span('brerr', ch); // unmatched, or closed out of order
+      }
+      i++; continue;
+    }
+    plain(ch); i++;
+  }
+  return out;
+}
+
+/* ---- Editor rendering + scroll sync (highlight <pre> sits under a
+   transparent <textarea> so editing, caret and selection stay native). ---- */
+function render() {
+  hlcode.innerHTML = highlight(ed.value, effectiveLang()) + '\n';
+  hl.scrollTop = ed.scrollTop; hl.scrollLeft = ed.scrollLeft;
+  const lines = ed.value ? ed.value.split('\n').length : 0;
+  statusEl.textContent = ed.value
+    ? lines + ' lines · ' + ed.value.length.toLocaleString() + ' chars · language: ' + effectiveLang()
+    : 'Empty paste.';
+}
+ed.addEventListener('input', () => { dirty = true; render(); });
+ed.addEventListener('scroll', () => { hl.scrollTop = ed.scrollTop; hl.scrollLeft = ed.scrollLeft; });
+langSel.addEventListener('change', render);
+
+/* ---- URL format: #l=<lang>&c=<base64url(gzip(code))>
+   Native CompressionStream, so no library is vendored in. The fragment
+   is never sent to the server, exactly like topaz's design — only the
+   compression differs (gzip here, LZMA there, so the two are not
+   interchangeable). ---- */
+function bufToB64url(buf) {
+  const bytes = new Uint8Array(buf); let s = '';
+  for (let k = 0; k < bytes.length; k += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(k, k + 0x8000));
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64urlToBuf(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s), bytes = new Uint8Array(bin.length);
+  for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k);
+  return bytes.buffer;
+}
+async function compress(text) {
+  const out = await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+  return bufToB64url(out);
+}
+async function decompress(b64) {
+  const out = await new Response(new Blob([b64urlToBuf(b64)]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  return out;
+}
+async function share(copyToClipboard) {
+  if (!ed.value.trim()) { statusEl.textContent = 'Nothing to share yet — type or paste some code first.'; return; }
+  try {
+    const c = await compress(ed.value);
+    const params = new URLSearchParams({ l: effectiveLang(), c });
+    history.replaceState(null, '', '#' + params.toString());
+    shareurl.value = location.href;
+    sharebox.classList.add('open');
+    const msg = 'Link ready — ' + location.href.length.toLocaleString() + ' chars in the URL (' + c.length + ' compressed).';
+    if (copyToClipboard) {
+      try { await navigator.clipboard.writeText(location.href); statusEl.textContent = msg + ' Copied to clipboard.'; }
+      catch (e) { statusEl.textContent = msg + ' Clipboard blocked — copy it from the box above.'; shareurl.select(); }
+    } else statusEl.textContent = msg;
+    dirty = false;
+  } catch (e) {
+    statusEl.textContent = 'Could not build a link in this browser (' + e.message + '). Try a current Chromium / Firefox / Safari.';
+  }
+}
+$('share').addEventListener('click', () => share(true));
+$('copylink').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(shareurl.value); statusEl.textContent = 'Link copied.'; }
+  catch (e) { shareurl.select(); statusEl.textContent = 'Select the link above and copy it manually.'; }
+});
+$('copycode').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(ed.value); statusEl.textContent = 'Code copied.'; }
+  catch (e) { statusEl.textContent = 'Could not copy code in this browser.'; }
+});
+$('download').addEventListener('click', () => {
+  const lang = effectiveLang(), ext = EXTS[lang] || 'txt';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([ed.value], { type: 'text/plain' }));
+  a.download = 'paste.' + ext; a.click(); URL.revokeObjectURL(a.href);
+});
+$('new').addEventListener('click', () => {
+  if (dirty && ed.value && !confirm('Start a new paste? Your current code is only saved in its share link.')) return;
+  ed.value = ''; langSel.value = 'auto'; history.replaceState(null, '', location.pathname);
+  sharebox.classList.remove('open'); dirty = false; render(); ed.focus();
+});
+$('example').addEventListener('click', () => {
+  langSel.value = 'odin';
+  ed.value = [
+    'package main', '',
+    'import "core:fmt"',
+    '',
+    'Point :: struct { x, y: int }',
+    '',
+    'main :: proc() {',
+    '\tpoints := make(map[string]Point)',
+    '\tpoints["origin"] = Point{x = 0, y = 0}',
+    '\t// Count how many points sit on an axis.',
+    '\tcount := 0',
+    '\tfor _, p in points {',
+    '\t\tif p.x == 0 || p.y == 0 {',
+    '\t\t\tcount += 1',
+    '\t\t}',
+    '\t}',
+    '\tfmt.println("on an axis:", count)',
+    '}',
+    '',
+  ].join('\n');
+  dirty = true; render(); ed.focus();
+});
+$('theme').addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('paste-theme', next); } catch (e) {}
+});
+ed.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); share(true); }
+});
+
+/* ---- Load from a link. ---- */
+(async function init() {
+  try {
+    const saved = localStorage.getItem('paste-theme');
+    if (saved) document.documentElement.dataset.theme = saved;
+  } catch (e) {}
+  const h = location.hash.slice(1);
+  if (!h) { render(); ed.focus(); return; }
+  let params;
+  try { params = new URLSearchParams(h); } catch (e) { params = null; }
+  const c = params && params.get('c');
+  const l = params && params.get('l');
+  if (l && LANGS[l]) langSel.value = l;
+  if (c) {
+    try {
+      ed.value = await decompress(c);
+      statusEl.textContent = 'Loaded from link.';
+    } catch (e) {
+      // Fallback: plain base64 text (hand-made short links), else raw text.
+      try { ed.value = new TextDecoder().decode(b64urlToBuf(c)); }
+      catch (e2) {
+        try { ed.value = decodeURIComponent(c); }
+        catch (e3) {
+          statusEl.textContent = 'Could not decode this link. Note: topaz links use LZMA, this page uses gzip, so the two formats are not interchangeable.';
+        }
+      }
+    }
+  } else if (h) {
+    // A bare fragment: treat it as URL-encoded text, for hand-made links.
+    try { ed.value = decodeURIComponent(h); } catch (e) {}
+  }
+  render();
+})();
+</script>
+</body>
+</html>
